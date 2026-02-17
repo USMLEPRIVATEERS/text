@@ -145,6 +145,30 @@
       flex-shrink: 0;
     }
 
+    .realtime-status {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      transition: color 0.2s, background 0.2s;
+    }
+
+    .realtime-status .material-icons-outlined { font-size: 14px; }
+
+    .realtime-status.connected {
+      color: var(--green);
+      background: #e6f4ea;
+    }
+
+    .realtime-status.disconnected {
+      color: var(--red);
+      background: #fce8e6;
+    }
+
     .word-count {
       font-size: 11px;
       color: var(--text-muted);
@@ -511,7 +535,7 @@
       .btn-menu { display: grid; }
       .ql-editor { padding: 40px 24px; width: 100%; min-height: auto; }
       .ql-editor.ql-blank::before { left: 24px !important; right: 24px !important; }
-      .word-count { display: none; }
+      .word-count, .realtime-status { display: none; }
     }
 
     @media (max-width: 600px) {
@@ -625,6 +649,9 @@
     </div>
     <span class="save-status" id="saveStatus"></span>
     <div class="header-actions">
+      <span class="realtime-status" id="realtimeStatus">
+        <span class="material-icons-outlined">sensors</span> Conectando...
+      </span>
       <span class="word-count" id="wordCount"></span>
     </div>
   </header>
@@ -693,6 +720,8 @@
     let quill = null;
     let saveTimeout = null;
     let docs = [];
+    let isRemoteUpdate = false;
+    let lastSavedContent = null;
 
     // ---- Color utils ----
     function isDarkColor(color) {
@@ -768,8 +797,9 @@
         return delta;
       });
 
-      quill.on('text-change', () => {
+      quill.on('text-change', (delta, oldDelta, source) => {
         if (!currentDocId) return;
+        if (isRemoteUpdate) return;
         showStatus('saving');
         clearTimeout(saveTimeout);
         saveTimeout = setTimeout(saveDoc, 800);
@@ -841,6 +871,7 @@
       titleInput.value = data.title;
       titleInput.disabled = false;
 
+      lastSavedContent = data.content || '';
       try {
         const delta = JSON.parse(data.content);
         quill.setContents(delta);
@@ -860,6 +891,7 @@
 
       const title = document.getElementById('titleInput').value || 'Sem titulo';
       const content = JSON.stringify(quill.getContents());
+      lastSavedContent = content;
 
       const { error } = await db
         .from('documents')
@@ -1025,8 +1057,96 @@
       }
     });
 
+    // ---- Realtime sync ----
+    function setupRealtime() {
+      db.channel('documents-changes')
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'documents' },
+          (payload) => {
+            const { eventType, new: newRow, old: oldRow } = payload;
+
+            if (eventType === 'INSERT') {
+              const exists = docs.find(d => d.id === newRow.id);
+              if (!exists) {
+                docs.unshift(newRow);
+                renderDocList();
+              }
+            }
+
+            else if (eventType === 'DELETE') {
+              docs = docs.filter(d => d.id !== (oldRow && oldRow.id));
+              if (currentDocId === (oldRow && oldRow.id)) {
+                currentDocId = null;
+                if (quill) {
+                  quill.setText('');
+                  document.getElementById('titleInput').value = '';
+                  document.getElementById('titleInput').disabled = true;
+                  document.getElementById('wordCount').textContent = '';
+                }
+              }
+              renderDocList();
+            }
+
+            else if (eventType === 'UPDATE') {
+              // Update local doc cache
+              const idx = docs.findIndex(d => d.id === newRow.id);
+              if (idx !== -1) {
+                docs[idx] = { ...docs[idx], ...newRow };
+              } else {
+                docs.unshift(newRow);
+              }
+              renderDocList();
+
+              // If this is the currently open doc, update editor
+              if (newRow.id === currentDocId && quill) {
+                // Skip if this is our own save coming back
+                if (newRow.content === lastSavedContent) return;
+
+                const titleInput = document.getElementById('titleInput');
+                if (titleInput.value !== newRow.title && document.activeElement !== titleInput) {
+                  titleInput.value = newRow.title;
+                }
+
+                // Save cursor position
+                const sel = quill.getSelection();
+
+                isRemoteUpdate = true;
+                try {
+                  const delta = JSON.parse(newRow.content);
+                  quill.setContents(delta, 'silent');
+                } catch {
+                  quill.setText(newRow.content || '', 'silent');
+                }
+                lastSavedContent = newRow.content;
+                isRemoteUpdate = false;
+
+                // Restore cursor
+                if (sel) {
+                  const len = quill.getLength();
+                  quill.setSelection(Math.min(sel.index, len - 1), sel.length, 'silent');
+                }
+
+                updateWordCount();
+                showStatus('saved');
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          const el = document.getElementById('realtimeStatus');
+          if (status === 'SUBSCRIBED') {
+            el.innerHTML = '<span class="material-icons-outlined">sensors</span> Sincronizado';
+            el.className = 'realtime-status connected';
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            el.innerHTML = '<span class="material-icons-outlined">sensors_off</span> Desconectado';
+            el.className = 'realtime-status disconnected';
+          }
+        });
+    }
+
     // ---- Init ----
     loadDocs();
+    setupRealtime();
   </script>
 </body>
 </html>
