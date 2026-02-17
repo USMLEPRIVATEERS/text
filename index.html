@@ -335,7 +335,7 @@
     const SUPABASE_URL = 'https://awtjzgqiinxddyxyslqj.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF3dGp6Z3FpaW54ZGR5eHlzbHFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzNjg4ODEsImV4cCI6MjA4Njk0NDg4MX0.HE-t4ReI3VWv5GKw1-t1pkkuqtAjdA4jJ2fnQZBXy5s';
 
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // ---- State ----
     let currentDocId = null;
@@ -382,7 +382,7 @@
 
     // ---- Supabase Operations ----
     async function loadDocs() {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('documents')
         .select('id, title, updated_at')
         .order('updated_at', { ascending: false });
@@ -399,7 +399,7 @@
     }
 
     async function createDoc() {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('documents')
         .insert({ title: 'Sem título', content: '' })
         .select()
@@ -419,7 +419,7 @@
     async function openDoc(id) {
       currentDocId = id;
 
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('documents')
         .select('*')
         .eq('id', id)
@@ -456,7 +456,7 @@
       const title = document.getElementById('titleInput').value || 'Sem título';
       const content = JSON.stringify(quill.getContents());
 
-      const { error } = await supabase
+      const { error } = await db
         .from('documents')
         .update({ title, content })
         .eq('id', currentDocId);
@@ -481,7 +481,7 @@
       e.stopPropagation();
       if (!confirm('Excluir este documento?')) return;
 
-      const { error } = await supabase
+      const { error } = await db
         .from('documents')
         .delete()
         .eq('id', id);
