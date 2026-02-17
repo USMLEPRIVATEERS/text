@@ -564,6 +564,48 @@
       margin-bottom: 8px;
       display: block;
     }
+
+    /* ===== SORT BAR ===== */
+    .sort-bar {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .sort-bar label {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .sort-bar label .material-icons-outlined { font-size: 15px; }
+
+    .sort-select {
+      flex: 1;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      color: var(--text);
+      background: var(--white);
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='%2380868b'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 6px center;
+      padding-right: 22px;
+    }
+
+    .sort-select:focus { border-color: var(--blue); }
   </style>
 </head>
 <body>
@@ -601,6 +643,19 @@
       </div>
       <div class="search-box">
         <input type="text" class="search-input" id="searchInput" placeholder="Buscar documentos..." oninput="filterDocs()">
+      </div>
+      <div class="sort-bar">
+        <label><span class="material-icons-outlined">sort</span> Ordenar:</label>
+        <select class="sort-select" id="sortSelect" onchange="renderDocList()">
+          <option value="updated_desc">Modificado recente</option>
+          <option value="updated_asc">Modificado antigo</option>
+          <option value="created_desc">Criado recente</option>
+          <option value="created_asc">Criado antigo</option>
+          <option value="title_asc">Titulo A-Z</option>
+          <option value="title_desc">Titulo Z-A</option>
+          <option value="size_desc">Maior tamanho</option>
+          <option value="size_asc">Menor tamanho</option>
+        </select>
       </div>
       <div class="doc-list" id="docList">
         <div class="loading"><div class="spinner"></div> Carregando...</div>
@@ -734,7 +789,7 @@
     async function loadDocs() {
       const { data, error } = await db
         .from('documents')
-        .select('id, title, updated_at')
+        .select('id, title, content, created_at, updated_at')
         .order('updated_at', { ascending: false });
 
       if (error) {
@@ -760,7 +815,7 @@
         return;
       }
 
-      docs.unshift({ id: data.id, title: data.title, updated_at: data.updated_at });
+      docs.unshift({ id: data.id, title: data.title, content: data.content || '', created_at: data.created_at, updated_at: data.updated_at });
       renderDocList();
       openDoc(data.id);
       closeSidebarMobile();
@@ -820,6 +875,7 @@
       const doc = docs.find(d => d.id === currentDocId);
       if (doc) {
         doc.title = title;
+        doc.content = content;
         doc.updated_at = new Date().toISOString();
       }
       renderDocList();
@@ -856,6 +912,37 @@
     }
 
     // ---- UI Rendering ----
+    function sortDocs(list) {
+      const sort = document.getElementById('sortSelect').value;
+      const sorted = [...list];
+      sorted.sort((a, b) => {
+        switch (sort) {
+          case 'updated_desc': return new Date(b.updated_at) - new Date(a.updated_at);
+          case 'updated_asc': return new Date(a.updated_at) - new Date(b.updated_at);
+          case 'created_desc': return new Date(b.created_at) - new Date(a.created_at);
+          case 'created_asc': return new Date(a.created_at) - new Date(b.created_at);
+          case 'title_asc': return (a.title || '').localeCompare(b.title || '', 'pt-BR');
+          case 'title_desc': return (b.title || '').localeCompare(a.title || '', 'pt-BR');
+          case 'size_desc': return (b.content || '').length - (a.content || '').length;
+          case 'size_asc': return (a.content || '').length - (b.content || '').length;
+          default: return 0;
+        }
+      });
+      return sorted;
+    }
+
+    function formatDate(dateStr) {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diff = now - d;
+      const mins = Math.floor(diff / 60000);
+      const hrs = Math.floor(diff / 3600000);
+      if (mins < 1) return 'Agora mesmo';
+      if (mins < 60) return 'Ha ' + mins + ' min';
+      if (hrs < 24) return 'Ha ' + hrs + 'h';
+      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+
     function renderDocList() {
       const list = document.getElementById('docList');
       const query = (document.getElementById('searchInput').value || '').toLowerCase();
@@ -867,10 +954,11 @@
         return;
       }
 
-      list.innerHTML = filtered.map(doc => {
-        const date = new Date(doc.updated_at);
-        const fmt = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const sorted = sortDocs(filtered);
+
+      list.innerHTML = sorted.map(doc => {
         const active = doc.id === currentDocId ? 'active' : '';
+        const dateLabel = 'Modificado ' + formatDate(doc.updated_at);
         return `
           <div class="doc-item ${active}" onclick="openDoc('${doc.id}')">
             <div class="doc-icon">
@@ -878,7 +966,7 @@
             </div>
             <div class="doc-item-info">
               <div class="doc-item-title">${escapeHtml(doc.title)}</div>
-              <div class="doc-item-date">${fmt}</div>
+              <div class="doc-item-date">${dateLabel}</div>
             </div>
             <button class="btn-delete" onclick="deleteDoc('${doc.id}', event)" title="Excluir">
               <span class="material-icons-outlined">delete_outline</span>
