@@ -639,6 +639,28 @@
     let saveTimeout = null;
     let docs = [];
 
+    // ---- Color utils ----
+    function isDarkColor(color) {
+      if (!color) return false;
+      let r, g, b;
+      if (color.startsWith('#')) {
+        const hex = color.replace('#', '');
+        const full = hex.length === 3
+          ? hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2]
+          : hex;
+        r = parseInt(full.substring(0,2), 16);
+        g = parseInt(full.substring(2,4), 16);
+        b = parseInt(full.substring(4,6), 16);
+      } else {
+        const m = color.match(/(\d+)/g);
+        if (!m || m.length < 3) return false;
+        r = parseInt(m[0]); g = parseInt(m[1]); b = parseInt(m[2]);
+      }
+      // luminance: dark if below 40%
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance < 0.4;
+    }
+
     // ---- Quill Init ----
     function initQuill() {
       if (quill) return;
@@ -666,8 +688,29 @@
             ['blockquote', 'code-block'],
             ['link', 'image'],
             ['clean']
-          ]
+          ],
+          clipboard: { matchers: [] }
         }
+      });
+
+      // Strip dark backgrounds on paste (from ChatGPT, Claude, etc.)
+      quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => {
+        delta.ops = delta.ops.map(op => {
+          if (op.attributes && op.attributes.background) {
+            const bg = op.attributes.background;
+            if (isDarkColor(bg)) {
+              delete op.attributes.background;
+            }
+          }
+          if (op.attributes && op.attributes.color) {
+            const c = op.attributes.color;
+            if (isDarkColor(c)) {
+              delete op.attributes.color;
+            }
+          }
+          return op;
+        });
+        return delta;
       });
 
       quill.on('text-change', () => {
