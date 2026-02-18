@@ -900,7 +900,7 @@
         clearTimeout(saveTimeout);
         saveTimeout = setTimeout(saveDoc, 800);
         updateWordCount();
-        refreshCopyButtons();
+        setTimeout(refreshCopyButtons, 0);
       });
 
       // Inject copy buttons into code blocks
@@ -997,6 +997,7 @@
       showStatus('saved');
       updateWordCount();
       closeSidebarMobile();
+      setTimeout(refreshCopyButtons, 50);
     }
 
     async function saveDoc() {
@@ -1167,6 +1168,7 @@
                 isRemoteUpdate = false;
                 if (sel) { const len=quill.getLength(); quill.setSelection(Math.min(sel.index,len-1),sel.length,'silent'); }
                 updateWordCount(); showStatus('saved');
+                setTimeout(refreshCopyButtons, 50);
               }
             }
           })
