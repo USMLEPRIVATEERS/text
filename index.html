@@ -283,7 +283,7 @@
     }
 
     .editor-wrapper {
-      flex: 1; display: flex; flex-direction: column; overflow: hidden;
+      flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
     }
 
     /* Quill toolbar */
@@ -336,6 +336,7 @@
       color: var(--text);
       width: calc(816px * var(--zoom));
       min-height: calc(1056px * var(--zoom));
+      height: auto !important;
       max-width: 100%;
       padding: calc(72px * var(--zoom)) calc(96px * var(--zoom));
       font-size: calc(15px * var(--zoom));
@@ -344,7 +345,6 @@
       border-radius: 2px;
       margin: 0 auto;
       position: relative;
-      overflow: hidden;
       overflow-wrap: break-word;
       word-wrap: break-word;
       transition: width .2s, min-height .2s, padding .2s, font-size .2s;
