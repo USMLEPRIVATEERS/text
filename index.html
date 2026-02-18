@@ -343,6 +343,8 @@
       box-shadow: var(--shadow-md);
       border-radius: 2px;
       margin: 0 auto;
+      position: relative;
+      overflow: hidden;
       transition: width .2s, min-height .2s, padding .2s, font-size .2s;
     }
 
@@ -350,6 +352,8 @@
       color: var(--text-muted) !important;
       font-style: normal !important;
       padding: 0 !important;
+      position: absolute !important;
+      top: calc(72px * var(--zoom)) !important;
       left: calc(96px * var(--zoom)) !important;
       right: calc(96px * var(--zoom)) !important;
     }
@@ -548,7 +552,7 @@
         padding: 20px !important; box-shadow: none !important;
         font-size: calc(15px * var(--zoom)) !important;
       }
-      .ql-editor.ql-blank::before { left: 20px !important; right: 20px !important; }
+      .ql-editor.ql-blank::before { top: 20px !important; left: 20px !important; right: 20px !important; }
 
       .ql-container.ql-snow { padding: 0; }
 
@@ -690,8 +694,8 @@
     }
 
     // ---- Color utils ----
-    function isDarkColor(color) {
-      if (!color) return false;
+    function parseColor(color) {
+      if (!color || typeof color !== 'string') return null;
       let r, g, b;
       if (color.startsWith('#')) {
         const hex = color.replace('#', '');
@@ -701,10 +705,20 @@
         b = parseInt(full.substring(4,6), 16);
       } else {
         const m = color.match(/(\d+)/g);
-        if (!m || m.length < 3) return false;
+        if (!m || m.length < 3) return null;
         r = parseInt(m[0]); g = parseInt(m[1]); b = parseInt(m[2]);
       }
-      return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.4;
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    }
+
+    function isDarkColor(color) {
+      const l = parseColor(color);
+      return l !== null && l < 0.45;
+    }
+
+    function isLightColor(color) {
+      const l = parseColor(color);
+      return l !== null && l > 0.85;
     }
 
     // ---- Zoom ----
@@ -796,13 +810,21 @@
         }
       });
 
+      // Strip ALL background colors and non-standard text colors on paste
+      // Forces clean black-on-white regardless of source (ChatGPT, Claude, VSCode, etc.)
       quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => {
         delta.ops = delta.ops.map(op => {
-          if (op.attributes && op.attributes.background) {
-            if (isDarkColor(op.attributes.background)) delete op.attributes.background;
-          }
-          if (op.attributes && op.attributes.color) {
-            if (isDarkColor(op.attributes.color)) delete op.attributes.color;
+          if (op.attributes) {
+            // Always remove background — no colored backgrounds allowed
+            if (op.attributes.background) delete op.attributes.background;
+            // Remove color unless it's a user-intentional non-dark color
+            // (remove black, dark grays, whites-on-dark-theme colors)
+            if (op.attributes.color) {
+              const c = op.attributes.color;
+              if (isDarkColor(c) || isLightColor(c) || c === 'inherit' || c === 'initial') {
+                delete op.attributes.color;
+              }
+            }
           }
           return op;
         });
