@@ -379,28 +379,26 @@
       border-radius: 3px !important;
       display: inline !important;
     }
-    /* Copy button on code blocks */
+    /* Copy button on code blocks — floating overlay outside Quill DOM */
     .code-copy-btn {
-      position: absolute;
-      top: 6px;
-      right: 6px;
+      position: fixed;
       width: 28px;
       height: 28px;
       border: 1px solid var(--border-light);
       border-radius: 5px;
       background: var(--white);
       cursor: pointer;
-      display: flex;
+      display: none;
       align-items: center;
       justify-content: center;
       opacity: 0;
       transition: opacity .15s, background .15s, transform .1s;
-      z-index: 5;
+      z-index: 50;
       padding: 0;
       pointer-events: auto;
     }
+    .code-copy-btn.visible { display: flex; opacity: 1; }
     .code-copy-btn svg { width: 14px; height: 14px; color: var(--text-secondary); }
-    .ql-editor pre:hover .code-copy-btn { opacity: 1; }
     .code-copy-btn:hover { background: var(--bg); }
     .code-copy-btn:active { transform: scale(0.9); }
     .code-copy-btn.copied { border-color: #34a853; }
@@ -900,43 +898,74 @@
         clearTimeout(saveTimeout);
         saveTimeout = setTimeout(saveDoc, 800);
         updateWordCount();
-        setTimeout(refreshCopyButtons, 0);
       });
-
-      // Inject copy buttons into code blocks
-      refreshCopyButtons();
     }
 
     const copySvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     const checkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 
-    function refreshCopyButtons() {
-      const editor = document.querySelector('.ql-editor');
-      if (!editor) return;
-      editor.querySelectorAll('pre').forEach(pre => {
-        if (pre.querySelector('.code-copy-btn')) return;
-        const btn = document.createElement('button');
-        btn.className = 'code-copy-btn';
-        btn.contentEditable = 'false';
-        btn.innerHTML = copySvg;
-        btn.title = 'Copiar codigo';
-        btn.addEventListener('mousedown', e => {
-          e.preventDefault();
-          e.stopPropagation();
-        });
-        btn.addEventListener('click', e => {
-          e.preventDefault();
-          e.stopPropagation();
-          const text = pre.textContent.replace(btn.textContent, '').trim();
-          navigator.clipboard.writeText(text).then(() => {
-            btn.innerHTML = checkSvg;
-            btn.classList.add('copied');
-            setTimeout(() => { btn.innerHTML = copySvg; btn.classList.remove('copied'); }, 1500);
-          });
-        });
-        pre.appendChild(btn);
+    /* Floating copy button — lives outside Quill DOM so it never gets stripped */
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'code-copy-btn';
+    copyBtn.innerHTML = copySvg;
+    copyBtn.title = 'Copiar codigo';
+    document.body.appendChild(copyBtn);
+
+    let hoveredPre = null;
+
+    function positionCopyBtn(pre) {
+      const rect = pre.getBoundingClientRect();
+      copyBtn.style.top = (rect.top + 6) + 'px';
+      copyBtn.style.left = (rect.right - 34) + 'px';
+    }
+
+    document.addEventListener('mouseover', e => {
+      const pre = e.target.closest('.ql-editor pre');
+      if (pre) {
+        hoveredPre = pre;
+        positionCopyBtn(pre);
+        copyBtn.classList.add('visible');
+      }
+    });
+
+    document.addEventListener('mouseout', e => {
+      const pre = e.target.closest('.ql-editor pre');
+      if (pre) {
+        const related = e.relatedTarget;
+        if (related === copyBtn || copyBtn.contains(related)) return;
+        if (pre.contains(related)) return;
+        hoveredPre = null;
+        copyBtn.classList.remove('visible');
+      }
+    });
+
+    copyBtn.addEventListener('mouseleave', () => {
+      hoveredPre = null;
+      copyBtn.classList.remove('visible');
+    });
+
+    copyBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+    copyBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!hoveredPre) return;
+      const text = hoveredPre.textContent.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.innerHTML = checkSvg;
+        copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.innerHTML = copySvg; copyBtn.classList.remove('copied'); }, 1500);
+      });
+    });
+
+    /* Reposition on scroll */
+    const qlContainer = document.querySelector('.ql-container');
+    if (qlContainer) {
+      qlContainer.addEventListener('scroll', () => {
+        if (hoveredPre) positionCopyBtn(hoveredPre);
       });
     }
+
+    function refreshCopyButtons() { /* no-op — floating btn handles everything */ }
 
     function updateWordCount() {
       if (!quill) return;
@@ -997,7 +1026,6 @@
       showStatus('saved');
       updateWordCount();
       closeSidebarMobile();
-      setTimeout(refreshCopyButtons, 50);
     }
 
     async function saveDoc() {
@@ -1168,7 +1196,6 @@
                 isRemoteUpdate = false;
                 if (sel) { const len=quill.getLength(); quill.setSelection(Math.min(sel.index,len-1),sel.length,'silent'); }
                 updateWordCount(); showStatus('saved');
-                setTimeout(refreshCopyButtons, 50);
               }
             }
           })
