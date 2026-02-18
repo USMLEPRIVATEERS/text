@@ -358,6 +358,34 @@
       right: calc(96px * var(--zoom)) !important;
     }
 
+    /* Force light code blocks — override Quill's dark theme */
+    .ql-editor pre,
+    .ql-editor pre.ql-syntax,
+    .ql-editor code,
+    .ql-snow .ql-editor pre.ql-syntax {
+      background-color: #f5f5f5 !important;
+      color: #202124 !important;
+      border: 1px solid var(--border-light) !important;
+      border-radius: 6px !important;
+      padding: 12px 16px !important;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;
+      font-size: 0.9em !important;
+    }
+    .ql-editor code {
+      padding: 2px 6px !important;
+      border-radius: 3px !important;
+      display: inline !important;
+    }
+    /* Kill any inline background on any element inside editor */
+    .ql-editor [style*="background"] {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+    .ql-editor pre [style*="color"],
+    .ql-editor code [style*="color"] {
+      color: #202124 !important;
+    }
+
     .ql-snow a { color: var(--blue) !important; }
     .ql-snow .ql-tooltip {
       background: var(--white) !important;
@@ -810,18 +838,21 @@
         }
       });
 
-      // Strip ALL background colors and non-standard text colors on paste
-      // Forces clean black-on-white regardless of source (ChatGPT, Claude, VSCode, etc.)
-      quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => {
+      // Aggressively strip ALL backgrounds and problematic colors on paste.
+      // Ensures clean black-on-white from ANY source (ChatGPT, Claude, VSCode, terminals, etc.)
+      function cleanDelta(delta) {
         delta.ops = delta.ops.map(op => {
           if (op.attributes) {
-            // Always remove background — no colored backgrounds allowed
-            if (op.attributes.background) delete op.attributes.background;
-            // Remove color unless it's a user-intentional non-dark color
-            // (remove black, dark grays, whites-on-dark-theme colors)
+            // Always nuke backgrounds
+            delete op.attributes.background;
+            delete op.attributes['background-color'];
+            // Remove problematic text colors (dark, light, or system)
             if (op.attributes.color) {
               const c = op.attributes.color;
-              if (isDarkColor(c) || isLightColor(c) || c === 'inherit' || c === 'initial') {
+              if (isDarkColor(c) || isLightColor(c) ||
+                  c === 'inherit' || c === 'initial' || c === 'unset' ||
+                  c === 'white' || c === 'black' || c === '#fff' || c === '#ffffff' ||
+                  c === '#000' || c === '#000000') {
                 delete op.attributes.color;
               }
             }
@@ -829,7 +860,9 @@
           return op;
         });
         return delta;
-      });
+      }
+      quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => cleanDelta(delta));
+      quill.clipboard.addMatcher(Node.TEXT_NODE, (node, delta) => cleanDelta(delta));
 
       quill.on('text-change', (delta, oldDelta, source) => {
         if (!currentDocId) return;
