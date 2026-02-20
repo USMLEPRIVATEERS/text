@@ -413,57 +413,63 @@
       color: #202124 !important;
     }
 
-    /* ===== TABLE STYLES ===== */
-    .ql-editor table {
+    /* ===== TABLE EMBED STYLES ===== */
+    .ql-table-embed {
+      margin: 16px 0;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .ql-table-embed table {
       width: 100%;
       border-collapse: collapse;
-      margin: 16px 0;
       font-size: 0.92em;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
     }
-    .ql-editor thead tr {
+    .ql-table-embed thead tr {
       background: #f8f9fa;
       border-bottom: 2px solid var(--border);
     }
-    .ql-editor th {
+    .ql-table-embed th {
       padding: 10px 14px;
       text-align: left;
       font-weight: 600;
       color: var(--text);
       font-size: 0.85em;
-      text-transform: uppercase;
       letter-spacing: 0.3px;
       white-space: nowrap;
+      border-right: 1px solid var(--border-light);
     }
-    .ql-editor td {
+    .ql-table-embed th:last-child { border-right: none; }
+    .ql-table-embed td {
       padding: 9px 14px;
       color: var(--text);
       border-top: 1px solid var(--border-light);
+      border-right: 1px solid var(--border-light);
       vertical-align: top;
     }
-    .ql-editor tbody tr:hover {
+    .ql-table-embed td:last-child { border-right: none; }
+    .ql-table-embed tbody tr:hover {
       background: #f1f3f4;
     }
-    .ql-editor tbody tr:nth-child(even) {
+    .ql-table-embed tbody tr:nth-child(even) {
       background: #fafbfc;
     }
-    .ql-editor tbody tr:nth-child(even):hover {
+    .ql-table-embed tbody tr:nth-child(even):hover {
       background: #f1f3f4;
     }
     /* When table has no thead, style first row as header */
-    .ql-editor table:not(:has(thead)) tr:first-child {
+    .ql-table-embed table:not(:has(thead)) tr:first-child {
       background: #f8f9fa;
       font-weight: 600;
       border-bottom: 2px solid var(--border);
     }
-    .ql-editor table:not(:has(thead)) tr:first-child td {
+    .ql-table-embed table:not(:has(thead)) tr:first-child td {
       font-size: 0.85em;
-      text-transform: uppercase;
       letter-spacing: 0.3px;
       border-top: none;
     }
+    /* Scrollable on small screens */
+    .ql-table-embed { overflow-x: auto; }
 
     .ql-snow a { color: var(--blue) !important; }
     .ql-snow .ql-tooltip {
@@ -885,96 +891,43 @@
       icon.textContent = entering ? 'fullscreen_exit' : 'fullscreen';
     }
 
-    // ---- Custom Table Blots for Quill ----
-    const Block = Quill.import('blots/block');
-    const Container = Quill.import('blots/container');
-    const Parchment = Quill.import('parchment');
+    // ---- Table BlockEmbed for Quill ----
+    // Stores entire <table> as a single atomic block so paste preserves structure
+    const BlockEmbed = Quill.import('blots/block/embed');
 
-    class TableCell extends Block {
+    class TableEmbed extends BlockEmbed {
       static create(value) {
         const node = super.create();
-        if (value && value !== true) {
-          if (value.colspan) node.setAttribute('colspan', value.colspan);
-          if (value.rowspan) node.setAttribute('rowspan', value.rowspan);
+        if (typeof value === 'string') {
+          // Sanitize: parse and re-serialize to strip scripts etc.
+          const tmp = document.createElement('div');
+          tmp.innerHTML = value;
+          // Remove any script/style tags
+          tmp.querySelectorAll('script,style,iframe,object,embed').forEach(el => el.remove());
+          // Strip inline styles from all cells (clean paste)
+          tmp.querySelectorAll('*').forEach(el => {
+            el.removeAttribute('style');
+            el.removeAttribute('class');
+          });
+          const table = tmp.querySelector('table');
+          if (table) {
+            node.innerHTML = table.outerHTML;
+          } else {
+            node.innerHTML = tmp.innerHTML;
+          }
         }
+        node.setAttribute('contenteditable', 'false');
         return node;
       }
-      static formats(domNode) {
-        const f = {};
-        if (domNode.hasAttribute('colspan')) f.colspan = domNode.getAttribute('colspan');
-        if (domNode.hasAttribute('rowspan')) f.rowspan = domNode.getAttribute('rowspan');
-        return Object.keys(f).length ? f : undefined;
-      }
-      optimize(context) {
-        super.optimize(context);
-        // Ensure cell is inside a row
-        if (this.parent && !(this.parent instanceof TableRow)) {
-          this.wrap(TableRow.blotName);
-        }
+      static value(domNode) {
+        return domNode.innerHTML;
       }
     }
-    TableCell.blotName = 'table-cell';
-    TableCell.tagName = 'TD';
+    TableEmbed.blotName = 'table-embed';
+    TableEmbed.tagName = 'DIV';
+    TableEmbed.className = 'ql-table-embed';
 
-    class TableHeader extends Block {
-      static create(value) {
-        const node = super.create();
-        if (value && value !== true) {
-          if (value.colspan) node.setAttribute('colspan', value.colspan);
-          if (value.rowspan) node.setAttribute('rowspan', value.rowspan);
-        }
-        return node;
-      }
-      static formats(domNode) {
-        const f = {};
-        if (domNode.hasAttribute('colspan')) f.colspan = domNode.getAttribute('colspan');
-        if (domNode.hasAttribute('rowspan')) f.rowspan = domNode.getAttribute('rowspan');
-        return Object.keys(f).length ? f : undefined;
-      }
-      optimize(context) {
-        super.optimize(context);
-        if (this.parent && !(this.parent instanceof TableRow)) {
-          this.wrap(TableRow.blotName);
-        }
-      }
-    }
-    TableHeader.blotName = 'table-header';
-    TableHeader.tagName = 'TH';
-
-    class TableRow extends Container {
-      optimize(context) {
-        super.optimize(context);
-        if (this.parent && !(this.parent instanceof TableBody) && !(this.parent instanceof TableHead) && !(this.parent instanceof TableContainer)) {
-          this.wrap(TableBody.blotName);
-        }
-      }
-    }
-    TableRow.blotName = 'table-row';
-    TableRow.tagName = 'TR';
-    TableRow.allowedChildren = [TableCell, TableHeader];
-
-    class TableBody extends Container {}
-    TableBody.blotName = 'table-body';
-    TableBody.tagName = 'TBODY';
-    TableBody.allowedChildren = [TableRow];
-
-    class TableHead extends Container {}
-    TableHead.blotName = 'table-head';
-    TableHead.tagName = 'THEAD';
-    TableHead.allowedChildren = [TableRow];
-
-    class TableContainer extends Container {}
-    TableContainer.blotName = 'table-container';
-    TableContainer.tagName = 'TABLE';
-    TableContainer.allowedChildren = [TableHead, TableBody, TableRow];
-
-    // Register all blots
-    Quill.register(TableCell);
-    Quill.register(TableHeader);
-    Quill.register(TableRow);
-    Quill.register(TableBody);
-    Quill.register(TableHead);
-    Quill.register(TableContainer);
+    Quill.register(TableEmbed);
 
     // ---- Quill Init ----
     function initQuill() {
@@ -1031,7 +984,15 @@
         });
         return delta;
       }
-      quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => cleanDelta(delta));
+      // Intercept <table> elements on paste and convert to TableEmbed
+      quill.clipboard.addMatcher('TABLE', (node, delta) => {
+        const Delta = Quill.import('delta');
+        return new Delta().insert({ 'table-embed': node.outerHTML });
+      });
+      quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => {
+        if (node.tagName === 'TABLE') return delta; // already handled above
+        return cleanDelta(delta);
+      });
       quill.clipboard.addMatcher(Node.TEXT_NODE, (node, delta) => cleanDelta(delta));
 
       // Override the clean button with a robust manual handler
