@@ -1034,6 +1034,46 @@
       quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => cleanDelta(delta));
       quill.clipboard.addMatcher(Node.TEXT_NODE, (node, delta) => cleanDelta(delta));
 
+      // Override the clean button with a robust manual handler
+      const toolbar = quill.getModule('toolbar');
+      toolbar.addHandler('clean', () => {
+        const range = quill.getSelection();
+        if (!range) return;
+        if (range.length === 0) {
+          // No selection: remove all inline formats at cursor
+          const formats = quill.getFormat(range);
+          Object.keys(formats).forEach(f => {
+            if (f !== 'list' && f !== 'indent' && f !== 'direction' && f !== 'align') {
+              quill.format(f, false, 'user');
+            }
+          });
+        } else {
+          // Has selection: strip all formatting
+          const text = quill.getText(range.index, range.length);
+          quill.removeFormat(range.index, range.length, 'user');
+          // Also explicitly clear known inline formats
+          ['bold', 'italic', 'underline', 'strike', 'color', 'background',
+           'font', 'size', 'link', 'code', 'script'].forEach(f => {
+            quill.formatText(range.index, range.length, f, false, 'user');
+          });
+          // Clear block formats for each line in the selection
+          let pos = range.index;
+          const end = range.index + range.length;
+          while (pos < end) {
+            const [line, offset] = quill.getLine(pos);
+            if (!line) break;
+            const lineLen = line.length();
+            quill.formatLine(pos, 1, 'header', false, 'user');
+            quill.formatLine(pos, 1, 'blockquote', false, 'user');
+            quill.formatLine(pos, 1, 'code-block', false, 'user');
+            quill.formatLine(pos, 1, 'list', false, 'user');
+            quill.formatLine(pos, 1, 'indent', false, 'user');
+            quill.formatLine(pos, 1, 'align', false, 'user');
+            pos += (lineLen - offset);
+          }
+        }
+      });
+
       quill.on('text-change', (delta, oldDelta, source) => {
         if (!currentDocId) return;
         if (isRemoteUpdate) return;
