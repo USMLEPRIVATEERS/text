@@ -413,6 +413,58 @@
       color: #202124 !important;
     }
 
+    /* ===== TABLE STYLES ===== */
+    .ql-editor table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 0.92em;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .ql-editor thead tr {
+      background: #f8f9fa;
+      border-bottom: 2px solid var(--border);
+    }
+    .ql-editor th {
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      color: var(--text);
+      font-size: 0.85em;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+    .ql-editor td {
+      padding: 9px 14px;
+      color: var(--text);
+      border-top: 1px solid var(--border-light);
+      vertical-align: top;
+    }
+    .ql-editor tbody tr:hover {
+      background: #f1f3f4;
+    }
+    .ql-editor tbody tr:nth-child(even) {
+      background: #fafbfc;
+    }
+    .ql-editor tbody tr:nth-child(even):hover {
+      background: #f1f3f4;
+    }
+    /* When table has no thead, style first row as header */
+    .ql-editor table:not(:has(thead)) tr:first-child {
+      background: #f8f9fa;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+    }
+    .ql-editor table:not(:has(thead)) tr:first-child td {
+      font-size: 0.85em;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      border-top: none;
+    }
+
     .ql-snow a { color: var(--blue) !important; }
     .ql-snow .ql-tooltip {
       background: var(--white) !important;
@@ -833,6 +885,97 @@
       icon.textContent = entering ? 'fullscreen_exit' : 'fullscreen';
     }
 
+    // ---- Custom Table Blots for Quill ----
+    const Block = Quill.import('blots/block');
+    const Container = Quill.import('blots/container');
+    const Parchment = Quill.import('parchment');
+
+    class TableCell extends Block {
+      static create(value) {
+        const node = super.create();
+        if (value && value !== true) {
+          if (value.colspan) node.setAttribute('colspan', value.colspan);
+          if (value.rowspan) node.setAttribute('rowspan', value.rowspan);
+        }
+        return node;
+      }
+      static formats(domNode) {
+        const f = {};
+        if (domNode.hasAttribute('colspan')) f.colspan = domNode.getAttribute('colspan');
+        if (domNode.hasAttribute('rowspan')) f.rowspan = domNode.getAttribute('rowspan');
+        return Object.keys(f).length ? f : undefined;
+      }
+      optimize(context) {
+        super.optimize(context);
+        // Ensure cell is inside a row
+        if (this.parent && !(this.parent instanceof TableRow)) {
+          this.wrap(TableRow.blotName);
+        }
+      }
+    }
+    TableCell.blotName = 'table-cell';
+    TableCell.tagName = 'TD';
+
+    class TableHeader extends Block {
+      static create(value) {
+        const node = super.create();
+        if (value && value !== true) {
+          if (value.colspan) node.setAttribute('colspan', value.colspan);
+          if (value.rowspan) node.setAttribute('rowspan', value.rowspan);
+        }
+        return node;
+      }
+      static formats(domNode) {
+        const f = {};
+        if (domNode.hasAttribute('colspan')) f.colspan = domNode.getAttribute('colspan');
+        if (domNode.hasAttribute('rowspan')) f.rowspan = domNode.getAttribute('rowspan');
+        return Object.keys(f).length ? f : undefined;
+      }
+      optimize(context) {
+        super.optimize(context);
+        if (this.parent && !(this.parent instanceof TableRow)) {
+          this.wrap(TableRow.blotName);
+        }
+      }
+    }
+    TableHeader.blotName = 'table-header';
+    TableHeader.tagName = 'TH';
+
+    class TableRow extends Container {
+      optimize(context) {
+        super.optimize(context);
+        if (this.parent && !(this.parent instanceof TableBody) && !(this.parent instanceof TableHead) && !(this.parent instanceof TableContainer)) {
+          this.wrap(TableBody.blotName);
+        }
+      }
+    }
+    TableRow.blotName = 'table-row';
+    TableRow.tagName = 'TR';
+    TableRow.allowedChildren = [TableCell, TableHeader];
+
+    class TableBody extends Container {}
+    TableBody.blotName = 'table-body';
+    TableBody.tagName = 'TBODY';
+    TableBody.allowedChildren = [TableRow];
+
+    class TableHead extends Container {}
+    TableHead.blotName = 'table-head';
+    TableHead.tagName = 'THEAD';
+    TableHead.allowedChildren = [TableRow];
+
+    class TableContainer extends Container {}
+    TableContainer.blotName = 'table-container';
+    TableContainer.tagName = 'TABLE';
+    TableContainer.allowedChildren = [TableHead, TableBody, TableRow];
+
+    // Register all blots
+    Quill.register(TableCell);
+    Quill.register(TableHeader);
+    Quill.register(TableRow);
+    Quill.register(TableBody);
+    Quill.register(TableHead);
+    Quill.register(TableContainer);
+
     // ---- Quill Init ----
     function initQuill() {
       if (quill) return;
@@ -1166,44 +1309,55 @@
     function setupRealtime() {
       db.channel('documents-changes')
         .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'documents' },
+          { event: 'INSERT', schema: 'public', table: 'documents' },
           (payload) => {
-            const { eventType, new: nr, old: or } = payload;
-            if (eventType === 'INSERT') {
-              if (!docs.find(d => d.id === nr.id)) { docs.unshift(nr); renderDocList(); }
+            const nr = payload.new;
+            if (!nr || !nr.id) return;
+            if (docs.find(d => d.id === nr.id)) return; // already in list (own insert)
+            docs.unshift(nr);
+            renderDocList();
+          })
+        .on('postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'documents' },
+          (payload) => {
+            const id = payload.old && payload.old.id;
+            if (!id) return;
+            if (!docs.find(d => d.id === id)) return; // already removed
+            docs = docs.filter(d => d.id !== id);
+            if (currentDocId === id) {
+              currentDocId = null;
+              if (quill) { quill.setText(''); document.getElementById('titleInput').value=''; document.getElementById('titleInput').disabled=true; document.getElementById('wordCount').textContent=''; }
             }
-            else if (eventType === 'DELETE') {
-              docs = docs.filter(d => d.id !== (or&&or.id));
-              if (currentDocId === (or&&or.id)) {
-                currentDocId = null;
-                if (quill) { quill.setText(''); document.getElementById('titleInput').value=''; document.getElementById('titleInput').disabled=true; document.getElementById('wordCount').textContent=''; }
-              }
-              renderDocList();
-            }
-            else if (eventType === 'UPDATE') {
-              const idx = docs.findIndex(d => d.id === nr.id);
-              if (idx!==-1) docs[idx]={...docs[idx],...nr}; else docs.unshift(nr);
-              renderDocList();
-              if (nr.id === currentDocId && quill) {
-                if (nr.content === lastSavedContent) return;
-                const ti = document.getElementById('titleInput');
-                if (ti.value !== nr.title && document.activeElement !== ti) ti.value = nr.title;
-                const sel = quill.getSelection();
-                isRemoteUpdate = true;
-                try { quill.setContents(JSON.parse(nr.content),'silent'); }
-                catch { quill.setText(nr.content||'','silent'); }
-                lastSavedContent = nr.content;
-                isRemoteUpdate = false;
-                if (sel) { const len=quill.getLength(); quill.setSelection(Math.min(sel.index,len-1),sel.length,'silent'); }
-                updateWordCount(); showStatus('saved');
-              }
+            renderDocList();
+          })
+        .on('postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'documents' },
+          (payload) => {
+            const nr = payload.new;
+            if (!nr || !nr.id) return;
+            const idx = docs.findIndex(d => d.id === nr.id);
+            if (idx !== -1) docs[idx] = { ...docs[idx], ...nr }; else docs.unshift(nr);
+            renderDocList();
+            // Sync editor content if this doc is open and change came from another device
+            if (nr.id === currentDocId && quill) {
+              if (nr.content === lastSavedContent) return;
+              const ti = document.getElementById('titleInput');
+              if (ti.value !== nr.title && document.activeElement !== ti) ti.value = nr.title;
+              const sel = quill.getSelection();
+              isRemoteUpdate = true;
+              try { quill.setContents(JSON.parse(nr.content), 'silent'); }
+              catch { quill.setText(nr.content || '', 'silent'); }
+              lastSavedContent = nr.content;
+              isRemoteUpdate = false;
+              if (sel) { const len = quill.getLength(); quill.setSelection(Math.min(sel.index, len - 1), sel.length, 'silent'); }
+              updateWordCount(); showStatus('saved');
             }
           })
         .subscribe((status) => {
           const dot = document.getElementById('realtimeDot');
           const label = document.getElementById('realtimeLabel');
-          if (status === 'SUBSCRIBED') { dot.className='dot connected'; label.textContent='Sincronizado'; }
-          else if (status==='CLOSED'||status==='CHANNEL_ERROR') { dot.className='dot disconnected'; label.textContent='Desconectado'; }
+          if (status === 'SUBSCRIBED') { dot.className = 'dot connected'; label.textContent = 'Sincronizado'; }
+          else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') { dot.className = 'dot disconnected'; label.textContent = 'Desconectado'; }
         });
     }
 
