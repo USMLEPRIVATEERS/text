@@ -1122,7 +1122,7 @@
     async function loadDocs() {
       const { data, error } = await db
         .from('documents')
-        .select('id, title, content, created_at, updated_at')
+        .select('id, title, created_at, updated_at')
         .order('updated_at', { ascending: false });
 
       if (error) {
@@ -1148,28 +1148,67 @@
       closeSidebarMobile();
     }
 
+    let _openDocAbort = null;
     async function openDoc(id) {
+      // Abort any previous load in progress
+      if (_openDocAbort) _openDocAbort.abort();
+      const ac = _openDocAbort = new AbortController();
+
       currentDocId = id;
+      renderDocList();
+
+      // 1. Immediately clear old heavy DOM + show loading
+      initQuill();
+      clearTimeout(saveTimeout);  // cancel pending auto-save for previous doc
+      quill.enable(false);
+      isRemoteUpdate = true;      // prevent text-change from triggering save
+      quill.setContents([]);      // free old DOM nodes
+      isRemoteUpdate = false;
+      quill.root.innerHTML = '<p style="color:#999;font-style:italic">Carregando...</p>';
+      document.getElementById('titleInput').value = '';
+      document.getElementById('titleInput').disabled = true;
+      showStatus('saving');
+
+      // 2. Yield so browser can repaint the clean state (no double heavy DOM)
+      await new Promise(r => requestAnimationFrame(r));
+      if (ac.signal.aborted) return;  // user clicked another doc
+
+      // 3. Fetch only what we need
       const { data, error } = await db
         .from('documents')
-        .select('*')
+        .select('id, title, content')
         .eq('id', id)
         .single();
-      if (error) { alert('Erro: ' + error.message); return; }
+      if (ac.signal.aborted) return;  // user clicked another doc during fetch
 
-      initQuill();
+      if (error) {
+        alert('Erro: ' + error.message);
+        quill.enable(true);
+        quill.setText('');
+        showStatus('error');
+        return;
+      }
+
       document.getElementById('titleInput').value = data.title;
       document.getElementById('titleInput').disabled = false;
-
       lastSavedContent = data.content || '';
+
+      // 4. Yield again before heavy render
+      await new Promise(r => requestAnimationFrame(r));
+      if (ac.signal.aborted) return;
+
+      // 5. Render content
+      isRemoteUpdate = true;
       try { quill.setContents(JSON.parse(data.content)); }
       catch { quill.setText(data.content || ''); }
+      isRemoteUpdate = false;
 
+      quill.enable(true);
       quill.focus();
-      renderDocList();
       showStatus('saved');
       updateWordCount();
       closeSidebarMobile();
+      _openDocAbort = null;
     }
 
     async function saveDoc() {
@@ -1186,7 +1225,7 @@
       if (error) { showStatus('error'); console.error(error); return; }
 
       const doc = docs.find(d => d.id === currentDocId);
-      if (doc) { doc.title = title; doc.content = content; doc.updated_at = new Date().toISOString(); }
+      if (doc) { doc.title = title; doc.updated_at = new Date().toISOString(); }
       renderDocList();
       showStatus('saved');
     }
@@ -1315,7 +1354,9 @@
             const nr = payload.new;
             if (!nr || !nr.id) return;
             if (docs.find(d => d.id === nr.id)) return; // already in list (own insert)
-            docs.unshift(nr);
+            // Only store metadata, not content
+            const { content, ...meta } = nr;
+            docs.unshift(meta);
             renderDocList();
           })
         .on('postgres_changes',
@@ -1336,19 +1377,21 @@
           (payload) => {
             const nr = payload.new;
             if (!nr || !nr.id) return;
+            // Only store metadata in docs[], not content
+            const { content: remoteContent, ...meta } = nr;
             const idx = docs.findIndex(d => d.id === nr.id);
-            if (idx !== -1) docs[idx] = { ...docs[idx], ...nr }; else docs.unshift(nr);
+            if (idx !== -1) docs[idx] = { ...docs[idx], ...meta }; else docs.unshift(meta);
             renderDocList();
             // Sync editor content if this doc is open and change came from another device
-            if (nr.id === currentDocId && quill) {
-              if (nr.content === lastSavedContent) return;
+            if (nr.id === currentDocId && quill && remoteContent !== undefined) {
+              if (remoteContent === lastSavedContent) return;
               const ti = document.getElementById('titleInput');
               if (ti.value !== nr.title && document.activeElement !== ti) ti.value = nr.title;
               const sel = quill.getSelection();
               isRemoteUpdate = true;
-              try { quill.setContents(JSON.parse(nr.content), 'silent'); }
-              catch { quill.setText(nr.content || '', 'silent'); }
-              lastSavedContent = nr.content;
+              try { quill.setContents(JSON.parse(remoteContent), 'silent'); }
+              catch { quill.setText(remoteContent || '', 'silent'); }
+              lastSavedContent = remoteContent;
               isRemoteUpdate = false;
               if (sel) { const len = quill.getLength(); quill.setSelection(Math.min(sel.index, len - 1), sel.length, 'silent'); }
               updateWordCount(); showStatus('saved');
