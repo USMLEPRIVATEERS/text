@@ -265,16 +265,19 @@
     .doc-item.active .doc-item-title { color: var(--blue); font-weight: 600; }
     .doc-item-date { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
 
-    .btn-delete {
-      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    .btn-link, .btn-delete {
+      position: absolute; top: 50%; transform: translateY(-50%);
       background: none; border: none; color: var(--text-muted);
       cursor: pointer; width: 26px; height: 26px; border-radius: 50%;
       display: grid; place-items: center;
       opacity: 0; transition: opacity .1s, background .1s, color .1s;
     }
-    .doc-item:hover .btn-delete { opacity: 1; }
+    .btn-link { right: 32px; }
+    .btn-delete { right: 6px; }
+    .doc-item:hover .btn-link, .doc-item:hover .btn-delete { opacity: 1; }
+    .btn-link:hover { background: rgba(26,115,232,.08); color: var(--blue); }
     .btn-delete:hover { background: rgba(217,48,37,.08); color: var(--red); }
-    .btn-delete .material-icons-outlined { font-size: 16px; }
+    .btn-link .material-icons-outlined, .btn-delete .material-icons-outlined { font-size: 16px; }
 
     /* ===== MAIN ===== */
     .main {
@@ -1155,6 +1158,7 @@
       const ac = _openDocAbort = new AbortController();
 
       currentDocId = id;
+      history.replaceState(null, '', '#' + id);
       renderDocList();
 
       // 1. Immediately clear old heavy DOM + show loading
@@ -1230,6 +1234,27 @@
       showStatus('saved');
     }
 
+    function copyDocLink(id, e) {
+      e.stopPropagation();
+      const url = location.origin + location.pathname + '#' + id;
+      navigator.clipboard.writeText(url).then(() => {
+        showStatus('saved');
+        // Brief visual feedback on the button
+        const btn = e.currentTarget;
+        const icon = btn.querySelector('.material-icons-outlined');
+        icon.textContent = 'check';
+        setTimeout(() => { icon.textContent = 'link'; }, 1500);
+      }).catch(() => {
+        // Fallback: select a temporary input
+        const tmp = document.createElement('input');
+        tmp.value = url;
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        tmp.remove();
+      });
+    }
+
     async function deleteDoc(id, e) {
       e.stopPropagation();
       if (!confirm('Excluir este documento?')) return;
@@ -1238,6 +1263,7 @@
       docs = docs.filter(d => d.id !== id);
       if (currentDocId === id) {
         currentDocId = null;
+        history.replaceState(null, '', location.pathname + location.search);
         if (quill) {
           quill.setText('');
           document.getElementById('titleInput').value = '';
@@ -1291,6 +1317,9 @@
             <div class="doc-item-title">${escapeHtml(doc.title)}</div>
             <div class="doc-item-date">${formatDate(doc.updated_at)}</div>
           </div>
+          <button class="btn-link" onclick="copyDocLink('${doc.id}',event)" title="Copiar link">
+            <span class="material-icons-outlined">link</span>
+          </button>
           <button class="btn-delete" onclick="deleteDoc('${doc.id}',event)">
             <span class="material-icons-outlined">delete_outline</span>
           </button>
@@ -1368,6 +1397,7 @@
             docs = docs.filter(d => d.id !== id);
             if (currentDocId === id) {
               currentDocId = null;
+              history.replaceState(null, '', location.pathname + location.search);
               if (quill) { quill.setText(''); document.getElementById('titleInput').value=''; document.getElementById('titleInput').disabled=true; document.getElementById('wordCount').textContent=''; }
             }
             renderDocList();
@@ -1407,8 +1437,32 @@
 
     // ---- Init ----
     loadPrefs();
-    loadDocs();
+    loadDocs().then(() => {
+      // Open doc from URL hash (e.g. #abc-123)
+      const hashId = location.hash.slice(1);
+      if (hashId && docs.find(d => d.id === hashId)) {
+        openDoc(hashId);
+      }
+    });
     setupRealtime();
+
+    // Handle back/forward navigation
+    window.addEventListener('hashchange', () => {
+      const hashId = location.hash.slice(1);
+      if (hashId && hashId !== currentDocId && docs.find(d => d.id === hashId)) {
+        openDoc(hashId);
+      } else if (!hashId && currentDocId) {
+        // Hash cleared — go back to doc list
+        currentDocId = null;
+        if (quill) {
+          quill.setText('');
+          document.getElementById('titleInput').value = '';
+          document.getElementById('titleInput').disabled = true;
+          document.getElementById('wordCount').textContent = '';
+        }
+        renderDocList();
+      }
+    });
   </script>
 </body>
 </html>
